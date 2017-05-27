@@ -1,6 +1,7 @@
 pico-8 cartridge // http://www.pico-8.com
 version 8
 __lua__
+framerate = 60
 --[[
 btn (i (p))
   get button i state for player p (default 0)
@@ -23,6 +24,33 @@ Colours indexes:
   	12  blue   13  indigo     14  pink         15  peach
 ]]--
 --helpers
+function ceil(_x)
+  return flr(_x+1)
+end
+function sign(_x)
+  if _x > 0 then
+    return 1
+  elseif _x < 0 then
+    return -1
+  else 
+    return 0
+  end
+end
+function round(_x)
+  if abs(_x) % 1 >= .5 then
+    if sign(_x) == 1 then
+      return ceil(_x)
+    else
+      return flr(_x)
+    end
+  else
+    if sign(_x) == 1 then
+      return flr(_x)
+    else
+      return ceil(_x)
+    end
+  end
+end
 function bool_to_str(_bool)
   if _bool then
     return "true"
@@ -38,6 +66,7 @@ function stringify_table(_table,_tab)
     end
     return ret
   end
+  _table = _table or {}
   _tab = _tab or 0
   local ret = "\n" .. num_to_tab(_tab) .. "{\n"
   for k,v in pairs(_table) do
@@ -70,15 +99,79 @@ function exists(obj,search)
   return false
 end
 
---types
-function new_position(_x,_y)
-  return {x=_x,y=_y}
+function in_range(_x,_a,_b)
+  return _x >= _a and _x <= _b
 end
+
+function clamp(_x,_a,_b)
+  if _x <= _a then
+    return _a
+  elseif _x <= _b then
+    return _b
+  else
+    return _x
+  end
+end
+
+--types
+--Position
+Position = {}
+Position.CircularMotion = function(_pos,_frame,_radius,_speed)
+  --returns a point on a circle centered at 0,0 based on a complete circle as speed 1 taking 1 second to complete
+  return new_position(_pos.x+cos((_frame/framerate)*_speed)*_radius,_pos.y+sin((_frame/framerate)*_speed)*_radius)
+end
+Position.Magnitude = function(_pos)
+  return sqrt(_pos.x*_pos.x + _pos.y*_pos.y)
+end
+Position.AproxEqual = function (_a,_b,_thresh)
+  _thresh = _thresh or 1
+  local dif = _a-_b
+  if in_range(dif.x,-_thresh,_thresh) and in_range(dif.y,-_thresh,_thresh) then
+    return true
+  else 
+    return false
+  end
+end
+Position.ToWhole = function(_pos)
+  return new_position(round(_pos.x),round(_pos.y))
+end
+Position.MoveTowards = function(_from,_to,_speed,_thresh)
+  --Rec thresh of .2 or higher
+  _speed,_thresh,_smooth = _speed or 1,_thresh or 1,_smooth or false
+  if not Position.AproxEqual(_from,_to,_thresh) then
+    return Position.ToWhole(_from + Position.ScalarMult(Position.Normalize(_to-_from),_speed))
+  else
+    return Position.ToWhole(_to)
+  end
+end
+Position.ScalarMult = function(_pos,_scalar)
+  return new_position(_pos.x*_scalar,_pos.y*_scalar)
+end
+Position.Normalize = function(_pos)
+  return new_position(_pos.x/Position.Magnitude(_pos),_pos.y/Position.Magnitude(_pos))
+end
+Position.mt = {}
+Position.mt.__add = function(_a,_b)
+  return new_position(_a.x+_b.x,_a.y+_b.y)
+end
+Position.mt.__sub = function(_a,_b)
+  return new_position(_a.x-_b.x,_a.y-_b.y)
+end
+Position.mt.__div = function(_pos,_scal)
+  return new_position(_a.x/_scal,_a.y/_scal)
+end
+function new_position(_x,_y)
+  local ret = {x=_x,y=_y}
+  setmetatable(ret,Position.mt)
+  return ret
+end
+
+
 function new_sprite(n,x,y,width,height,flipx,flipy)
   local draw = function (entity)
     spr(n,entity.position.x+x,entity.position.y+y,width,height,flipx,flipy)
   end
-  return {draw=draw}
+  return {draw=draw,n=n,x=x,y=y,width=width,height=height,flipx=flipx,flipy=flipy}
 end
 function new_rect(_x,_y,_width,_height)
   return {
@@ -186,7 +279,7 @@ function new_game(_starting_scene)
     local active_scene = _starting_scene
     local entities = {}
     local game_camera = {x=0,y=0,width=126,height=126}
-    local settings = {show_hitboxes=true,entities_active=true}
+    local settings = {show_hitboxes=false,entities_active=true}
     local frame = 0
     local started = false
     
@@ -336,6 +429,9 @@ function new_game(_starting_scene)
       end
     end
     return {
+            get_frame = function()
+              return frame
+            end,
             start = function ()
               if started == false then
                 printh("Starting Game")
@@ -372,17 +468,17 @@ end
 function data()
   --In this scope the objects which define a game are defined, along with scenes.
   local entity_data = {}
-  entity_data.baddy = function (_x,_y,_state)
+  entity_data.baddy = function (_x,_y,_to,_type)
     local sprite = new_sprite(4,0,0,2,2,false,false)
     return new_entity("baddy",
           {"enemy"},
           new_position(_x,_y),
           function (entity)
-            if (_state == "left") then
-              entity.position.x -= 1
-            elseif (_state == "up") then
-              entity.position.y -= 1
-            elseif (_state == "down") then
+            if _type then
+              entity.position = Position.CircularMotion(entity.position,entity.frame,4,1)
+              printh("second: " .. entity.frame/60 .. "pos:" .. stringify_table(entity.position))
+            else
+              entity.position.x += 1
               entity.position.y += 1
             end
           end,
@@ -399,8 +495,7 @@ function data()
   scene_data.init = 
   function ()
     return new_scene(function ()
-                      game.add_entity(data.entities.baddy(-8,0,""))
-                      game.add_entity(data.entities.baddy(6,-32,"down"))
+                      game.add_entity(data.entities.baddy(32,32,new_position(64,64),true))
                     end,
                     nil,
                     function ()
@@ -497,7 +592,7 @@ function _init()
   game = new_game(data.scenes.init())
   game.start()
 end
-function _update()
+function _update60()
   game.update()
 end
 function _draw()
