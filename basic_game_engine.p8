@@ -82,14 +82,26 @@ function stringify_table(_table,_tab)
   end
   return ret .. num_to_tab(_tab) .. "}\n"
 end
-
+function split(_string,_split)
+  local ret = {}
+  local cur = ""
+  for i=1,#_string do
+    local char = sub(_string,i,i)
+    if (char == _split) then
+      add(ret,cur)
+      cur = ""
+    else
+      cur = cur .. char
+    end
+  end
+  add(ret,cur)
+  return ret
+end
 function empty()
 end
-
 function print_center(str,x,y,col)
   print(str,x+((4-#str*4)/2),y,col)
 end
-
 function exists(obj,search)
   for v in all(obj) do
     if v == search then
@@ -98,27 +110,87 @@ function exists(obj,search)
   end
   return false
 end
-
 function in_range(_x,_a,_b)
   return _x >= _a and _x <= _b
 end
-
 function clamp(_x,_a,_b)
   if _x <= _a then
     return _a
-  elseif _x <= _b then
+  elseif _x >= _b then
     return _b
   else
     return _x
   end
 end
+function norm(_x,_min,_max) 
+  return (_x-_min)/(_max-_min)
+end
+function lerp(_percent,_min,_max)
+  if _percent >= 1 then
+    return _max
+  elseif _percent <= 0 then
+    return _min
+  end
+  return (_max-_min)*_percent+_min
+end
+function set_to(_tableA,_tableB)
+  for k,v in pairs(_tableA) do
+    _tableA[k] = _tableB[k]
+  end
+end
 
 --types
+--rect
+function new_rect(_x,_y,_width,_height)
+  return {x=_x,y=_y,width=_width,height=_height}
+end
+--tween
 --Position
 Position = {}
-Position.CircularMotion = function(_pos,_frame,_radius,_speed)
-  --returns a point on a circle centered at 0,0 based on a complete circle as speed 1 taking 1 second to complete
-  return new_position(_pos.x+cos((_frame/framerate)*_speed)*_radius,_pos.y+sin((_frame/framerate)*_speed)*_radius)
+Position.Set = function(_pos,_x,_y)
+  _pos.x,_pos.y = _x or 0, _y or 0
+end
+Position.CircularMotion = function(start_pos,center,speed)
+  --[[
+  CircularMotion takes a starting positiong a center and a speed, 
+  given the start position and center, find a vector dif from center to start_pos,
+  use the magnitude of dif to find the circle radius, use the angle between the components of dif to find the start location on the circle,
+  set the step to the appropriate starting location
+  ]]--
+  local dif = center - start_pos
+  local radius = Position.Magnitude(dif) 
+  local step = atan2(dif.x,dif.y)*framerate/speed
+  
+  local update = function (_displace,_speed)
+    if _displace then
+      center += _displace
+    end
+    if _speed then
+      speed += _speed
+    end
+    local ret = Position.ToWhole(new_position(-cos((step/framerate)*speed)*radius,-sin((step/framerate)*speed)*radius) + center)
+    step += 1
+    return ret
+  end
+  return {update=update}
+end
+Position.LerpTo = function(_from,_to,_speed)
+  --Speed determines how many seconds to take,, 1 = 1 second, .5 = half a second
+  local step = -1
+  local dif = _to-_from
+  local update = function(_new_speed)
+    _speed = _new_speed or _speed
+    step += 1
+    if step/(framerate*_speed) >= 1 then
+      return _to
+    else
+      return new_position(lerp(step/(framerate*_speed),_from.x,_to.x),lerp(step/(framerate*_speed),_from.y,_to.y))
+    end
+  end
+  local is_fin = function()
+    return step/(framerate*_speed) >= 1
+  end
+  return {update=update,is_fin=is_fin}
 end
 Position.Magnitude = function(_pos)
   return sqrt(_pos.x*_pos.x + _pos.y*_pos.y)
@@ -133,7 +205,7 @@ Position.AproxEqual = function (_a,_b,_thresh)
   end
 end
 Position.ToWhole = function(_pos)
-  return new_position(round(_pos.x),round(_pos.y))
+  _pos:set(round(_pos.x),round(_pos.y))
 end
 Position.MoveTowards = function(_from,_to,_speed,_thresh)
   --Rec thresh of .2 or higher
@@ -150,98 +222,138 @@ end
 Position.Normalize = function(_pos)
   return new_position(_pos.x/Position.Magnitude(_pos),_pos.y/Position.Magnitude(_pos))
 end
-Position.mt = {}
-Position.mt.__add = function(_a,_b)
+Position.__add = function(_a,_b)
   return new_position(_a.x+_b.x,_a.y+_b.y)
 end
-Position.mt.__sub = function(_a,_b)
+Position.__sub = function(_a,_b)
   return new_position(_a.x-_b.x,_a.y-_b.y)
 end
-Position.mt.__div = function(_pos,_scal)
-  return new_position(_a.x/_scal,_a.y/_scal)
+Position.__index = function(_table,_key)
+  return Position[_key]
 end
 function new_position(_x,_y)
   local ret = {x=_x,y=_y}
-  setmetatable(ret,Position.mt)
+  setmetatable(ret,Position)
+  return ret
+end
+Up = new_position(0,-1)
+Down = new_position(0,1)
+Left = new_position(-1,0)
+Right = new_position(1,0)
+
+--Sprite
+Sprite = {}
+Sprite.draw = function (_sprite,_entity)
+  spr(_sprite.n,_entity.position.x+_sprite.x,_entity.position.y+_sprite.y,_sprite.width,_sprite.height,_sprite.flipx,_sprite.flipy)
+end
+Sprite.__index = function (_table,_key)
+  return Sprite[_key]
+end
+function new_sprite(n,x,y,width,height,flipx,flipy)
+  local ret = {n=n or 0,x=x or 0, y = y or 0, width = width or 0, height = height or 0, flipx = flipx or false, flipy = flipy or false}
+  setmetatable(ret,Sprite)
   return ret
 end
 
-
-function new_sprite(n,x,y,width,height,flipx,flipy)
-  local draw = function (entity)
-    spr(n,entity.position.x+x,entity.position.y+y,width,height,flipx,flipy)
-  end
-  return {draw=draw,n=n,x=x,y=y,width=width,height=height,flipx=flipx,flipy=flipy}
+--hitbox/body
+function new_hitbox(_x,_y,_width,_height,_name,_immaterial)
+  return {x=_x or 0,y=_y or 0,width=_width or 0,height=_height or 0,name=_name or "",immaterial=_immaterial or false,collisions={}}
 end
-function new_rect(_x,_y,_width,_height)
-  return {
-          x=_x,
-          y=_y,
-          width=_width,
-          height=_height
-          }
+Body = {}
+Body.draw = function(_body,_entity)
+  for hitbox in all(_body.hitboxes) do
+    rect(_entity.position.x+hitbox.x,_entity.position.y+hitbox.y,_entity.position.x+hitbox.x+hitbox.width,_entity.position.y+hitbox.y+hitbox.height,11)
+  end  
 end
-function new_sequence(changee,frame_data,final_frame,changer,looping)
-  --new_sequence may seem complex, but it's a simple solution to the many 
-  --similar functions of changing some object's state depending on a frame in some sequence.
-  --_changee is the object to be changed
-  --_frame_data is an array, where the index represents the frame in which the data will be applied
-  --_changer is some functions that takes the changee and the element of the current frame the object is on and applies that data to the changee
-  --_looping is a boolean which determines if the object will persist again from frame 1 after completion 
-  --tip: a sequence will not run on a frame with null _frame_data, so if [1] and [20] are occupied
-  --a sequence will run on the first and 20ths and do nothing in between.
-  local frame = 0
-  
-  local update = function ()
-    --update is the function to be called each from to update the object to the current frame
-    --update will return whether or not the sequence has completed its full sequence
-    if frame_data[frame] != nil then
-      changer(changee,frame_data[frame])
+Body.get_collisions = function(_body)
+  local ret = {}
+  for hitbox in all(_body._hitboxes) do
+    if #hitbox.collision > 0 then
+      add(ret,hitbox)
     end
-    frame += 1
-    if frame == final_frame then
-      fin = true
-      if looping then
-        frame = 1
-      end
+  end
+  return ret
+end
+Body.locate_hitbox = function(_body,_name)
+  local ret = {}
+  for hitbox in all(_body._hitboxes) do
+    if hitbox.name == _name then
+      add(ret,hitbox)
     end
-    return fin
   end
-  
-  local reset = function ()
-    frame = 1
-    fin = false
-    changer(changee,frame_data[frame])
-  end
-  
-  return {update=update,reset=reset}
+  return ret
 end
-function animator(_sprite,_sprite_data)
-  _sprite.n = _sprite_data.n
-  _sprite.x = _sprite_data.x
-  _sprite.y = _sprite_data.y
-  _sprite.width = _sprite_data.width
-  _sprite.height = _sprite_data.height
-end
-function hitboxer(_hitbox,_hitbox_data)
-  _hitbox.x = _hitbox_data.x
-  _hitbox.y = _hitbox_data.y
-  _hitbox.width = _hitbox_data.width
-  _hitbox.height = _hitbox_data.height
-  _hitbox.immaterial = _hitbox_data.immaterial
-end
-function new_hitbox(_x,_y,_width,_height,_tag,_immaterial)
-  _x,_y,_width,_height,_tag,_immaterial = _x or 0, _y or 0, _width or 0, _height or 0, _tag or {}, _immaterial or false 
-  return {x=_x,y=_y,width=_width,height=_height,tag=_tag,immaterial=_immaterial,collisions={}}
+Body.__index = function(_table,_key)
+  return Body[_key]
 end
 function new_body(_hitboxes,_collision)
-  local draw = function (position)
-    for hitbox in all(_hitboxes) do
-      rect(position.x+hitbox.x,position.y+hitbox.y,position.x+hitbox.x+hitbox.width,position.y+hitbox.y+hitbox.height,11)
-    end  
-  end
-  return {hitboxes=_hitboxes,collision=_collision,draw=draw}
+  local ret = {hitboxes=_hitboxes,collision=_collision}
+  setmetatable(ret,Body)
+  return ret
 end
+--animation
+function parse_sprite_frames(_comp_sprite_frames)
+  --[[
+  sprite frame format "n,x,y,w,h,flipx,flipy|...|n,x,y,w,h,flipx,flipy" all numbers
+  ]]--
+  local sprite_frames = {}
+  local comp_sprites = split(_comp_sprite_frames,"|")
+  for i=1,#comp_sprites do
+    local sprite = split(comp_sprites[i],",")
+    add(sprite_frames,new_sprite(sprite[1],sprite[2],sprite[3],sprite[4],sprite[5],sprite[6],sprite[7]))
+  end
+  return sprite_frames
+end
+function parse_hitbox_frames(_comp_hitbox_frames)
+  --[[
+  hitbox frame format "x,y,w,h,name|..|x,y,w,h,name" all numbers
+  ]]--
+  local hitbox_frames = {}
+  local comp_hitboxes = split(_comp_hitbox_frames,"|")
+  for i=1,#comp_hitboxes do
+    local hitbox = split(comp_hitboxes[i],",")
+    add(hitbox_frames,new_hitbox(hitbox[1],hitbox[2],hitbox[3],hitbox[4],hitbox[5]))
+  end
+  return hitbox_frames
+end
+function new_frame(_sprite,_hitbox)
+  return {sprite=_sprite,hitbox=_hitbox}
+end
+function new_clip(_comp_sprite_frames,_comp_hitbox_frames,_sample_rate)
+  local frames = {}
+  local sprite_frames = parse_sprite_frames(_comp_sprite_frames)
+  local hitbox_frames = parse_hitbox_frames(_comp_hitbox_frames)
+  local length = max(#sprite_frames,#hitbox_frames)
+  for i=1,length do
+    add(frames,new_frame(sprite_frames[i],hitbox_frames[i]))
+  end
+  return {frames=frames,sample_rate=_sample_rate,length=length}
+end
+function new_animation(clip,sprite,hitbox,loop)
+  local frame = 0
+  local sample = 1
+  local update = function()
+    frame += 1
+    if frame % clip.sample_rate == 0 then
+      if sample > clip.length and loop then
+        sample = 1
+      elseif sample < clip.length then
+        sample += 1
+      end
+    end
+    if clip.frames[sample] then
+      if clip.frames[sample].sprite then
+        set_to(sprite,clip.frames[sample].sprite)
+      end
+      if clip.frames[sample].hitbox then
+        set_to(hitbox,clip.frames[sample].hitbox)
+      end
+    end
+  end
+  
+  return {update=update}
+end
+--entity
 function new_entity(_name,_tag,_position,_update,_draw,_body,_model,_z)
   --an entity is a data structure meant to be used by the game to create some effect
   --an entity is defined by the following:
@@ -279,7 +391,7 @@ function new_game(_starting_scene)
     local active_scene = _starting_scene
     local entities = {}
     local game_camera = {x=0,y=0,width=126,height=126}
-    local settings = {show_hitboxes=false,entities_active=true}
+    local settings = {show_hitboxes=true,entities_active=true}
     local frame = 0
     local started = false
     
@@ -302,6 +414,8 @@ function new_game(_starting_scene)
           ) then
             _fentity.body.collision(_fentity,_sentity)
             _sentity.body.collision(_sentity,_fentity)
+            add(_fhitbox.collisions,{entity=_sentity,hitbox=_shitbox})
+            add(_shitbox.collisions,{entity=_fentity,hitbox=_fhitbox})            
           end
         end
       end
@@ -424,7 +538,7 @@ function new_game(_starting_scene)
       for entity in all(z_indexed()) do
         entity.draw(entity)
         if (settings.show_hitboxes == true) then
-          entity.body.draw(entity.position)
+          entity.body:draw(entity)
         end
       end
     end
@@ -465,131 +579,62 @@ function new_game(_starting_scene)
             }
 end
 
-function data()
-  --In this scope the objects which define a game are defined, along with scenes.
-  local entity_data = {}
-  entity_data.baddy = function (_x,_y,_to,_type)
-    local sprite = new_sprite(4,0,0,2,2,false,false)
-    return new_entity("baddy",
-          {"enemy"},
-          new_position(_x,_y),
-          function (entity)
-            if _type then
-              entity.position = Position.CircularMotion(entity.position,entity.frame,4,1)
-              printh("second: " .. entity.frame/60 .. "pos:" .. stringify_table(entity.position))
-            else
-              entity.position.x += 1
-              entity.position.y += 1
-            end
-          end,
-          function (entity)
-            sprite.draw(entity)
-          end,
-          new_body({new_hitbox(0,8,16,8)}, 
-          function (entity,coll)
-          end),
-          {state="start",left=0,right=0,turn="left"}
-          ) end
-  --scenes
-  local scene_data = {}
-  scene_data.init = 
-  function ()
-    return new_scene(function ()
-                      game.add_entity(data.entities.baddy(32,32,new_position(64,64),true))
-                    end,
-                    nil,
-                    function ()
-                    end,
-                    nil,
-                    nil)
+entity_table = {}
+entity_table.baddy = 
+function (_x,_y,_to,_type)
+  local sprite = new_sprite(4,0,0,2,2,false,false)
+  local flag = false
+  local circ = Position.CircularMotion(new_position(0,2),new_position(16,16),1)
+  local ler = Position.LerpTo(new_position(0,0),new_position(25,0),.1)
+  local hitbox = new_hitbox(0,0,0,0)
+  _to = new_position(0,2)
+  local anim = new_animation(new_clip("0,1,1,1,1,1,1|2,1,1,1,1,1,1|32,1,1,1,1,1,1","10,-10,5,5|15,-15,5,5|10,-10,5,5",20),sprite,hitbox,true)
+  return new_entity("baddy",
+        {"enemy"},
+        new_position(_x,_y),
+        function (entity)
+          anim.update()
+          if flag == false and not Position.AproxEqual(entity.position,_to) then
+            entity.position = ler.update()
+          else
+            flag = true 
+          end
+          if flag then
+            entity.position = circ.update(Down+Right)
+          end
+        end,
+        function (entity)
+          sprite:draw(entity)
+        end,
+        new_body({new_hitbox(0,8,16,8),hitbox}, 
+        function (entity,coll)
+        end),
+        {state="start",left=0,right=0,turn="left"}
+        ) 
   end
-  
-  return {entities=entity_data,scenes=scene_data}
-end
---extensions
-function extensions()
-  function stage_builder()
-    --[[
-      stage_builder is an extension meant to provide methods for the production of a stage,
-      
-      the first being manual(), a function which takes an entity_name, and an object as an arg for entity construction
-      and will build a single entity for the stage
-      
-      the second being tiler(), a function meant to construct a mass of entities in a grid like format and adds them all to the stage
-      
-      finally the method build() will actually spawn the stage into the game
-    ]]--
-    local stage = {}
-    local manual = function(entity_name,args)
-      local entity = data.entity[entity_name](args)
-      add(stage,entity)
-    end
-    local tiler = function(context,map,size_x,size_y,x,y,arg)
-      --[[
-      context is an object where each key is a single character, and each value is an entity key in data.entity, this is to make maps in a more convenient manner
-      
-      map is a string which is a representation of a stage to be constructed and obeys the following laws
-      as a string map is a series of chars
-      each char represents an operation, either to build an entity specified by context, '-' for a non space, or '|' for the next row
-      each entity to be added to the stage will be placed according to its position in the map, 
-      where from left to right each entity is seperated by 'size' in its x position starting from the argument x
-      and each entity will be pushed up on the y access per row shift.
-      
-      size_x and size_y will determine the displacement between each entity per column or row shift respectively
-      
-      x and y will determine the starting location 
-      
-      example:
-      context = {b=baddy,t=tile,p=player}
-      map = "p----b|
-             tttttt"
-      size_x = 16
-      size_y = 16
-      x = 0
-      y = 0
-      
-      will create a stage where a player spawns at the 0,0 then later a baddy will be spawned at 80,0
-      then on the next row a series of tiles will be spawned in a row from left to right at y=16
-      ]]--
-      local running_x,running_y = x,y
-      for i=1, #map do
-        local c = sub(map,i,i)
-        if c == '-' then
-          running_x += size_x
-        elseif c == '|' then
-          running_x = x
-          running_y += size_y
-        else
-          local entity = data.entity[context[c]](arg)
-          entity.position.x = running_x
-          entity.position.y = running_y
-          add(stage,entity)
-          running_x += size_x
-        end 
-      end
-    end
-    local build = function()
-      --game.empty_entities()
-      for ent in all(stage) do
-        --game.add_entity(ent)
-      end
-    end
-    return {manual=manual,tiler=tiler,build=build}
-  end
-  extensions = {}
-  extensions.stage_builder = stage_builder()
-  return extensions
+        
+--scenes
+scene_table = {}
+scene_table.init = 
+function ()
+  return new_scene(function ()
+                    game.add_entity(entity_table.baddy(32,32,new_position(64,64),true))
+                  end,
+                  nil,
+                  function ()
+                  end,
+                  nil,
+                  nil)
 end
 
+extensions = {}
 --pico
 function _init()
   --Initialize Three Global objects
   --data: object which contains entity, scene, and starting_scene.
   --extensions: object which contains singular services to be called on
   --new_game: object which operates the game
-  data = data()
-  extensions = extensions()
-  game = new_game(data.scenes.init())
+  game = new_game(scene_table.init())
   game.start()
 end
 function _update60()
