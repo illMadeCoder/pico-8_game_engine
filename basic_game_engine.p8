@@ -172,12 +172,12 @@ Vector.metatable.MoveTowards = function(_self,_to,_speed)
     _self:SetTo(_self + Vector.scalarMult(Vector.unit_towards(_self,_to),_speed))
   end
 end
-Vector.Coroutines = {}
-Vector.Coroutines.MoveToInFrames = function(_self,_end,_framesToReachTarget)
+Vector.Animation = {}
+Vector.Animation.MoveToInFrames = function(_self,_end,_framesToReachTarget)
   --Linear interporlate between two points givin some count of frames
   local start,tick = new_vector(_self.x,_self.y),0
 
-  local function coroutine ()
+  local function update ()
     while tick/_framesToReachTarget <= 1 do
       tick += 1
       _self:Lerp(start,_end,tick/_framesToReachTarget)
@@ -185,31 +185,27 @@ Vector.Coroutines.MoveToInFrames = function(_self,_end,_framesToReachTarget)
     end
   end
   
-  return cocreate(coroutine)
+  return cocreate(update)
 end
-Vector.metatable.CircularMotion = function(start_vec,center,speed)
+Vector.Animation.CircularMotion = function(_self,_center,_speed)
   --[[
-  CircularMotion takes a starting vectorg a center and a speed, 
-  given the start vector and center, find a vector dif from center to start_vec,
+  CircularMotion takes a position a center and a speed, 
+  given the position and center, find a vector dif from center to start_vec,
   use the magnitude of dif to find the circle radius, use the angle between the components of dif to find the start location on the circle,
   set the step to the appropriate starting location
   ]]--
-  local dif = center - start_vec
-  local radius = Vector.magnitude(dif) 
-  local step = atan2(dif.x,dif.y)*framerate/speed
+  local dif = _center - _self
+  local radius,step = Vector.magnitude(dif), atan2(dif.x,dif.y)*framerate/_speed
   
-  local update = function (_displace,_speed)
-    if _displace then
-      center += _displace
+  local function update(_end)
+    while not _end do
+      step += 1
+      _self:Set(-cos((step/framerate)*_speed)*radius + _center.x,-sin((step/framerate)*_speed)*radius + _center.y)
+      yield()
     end
-    if _speed then
-      speed += _speed
-    end
-    local ret = Vector.ToWhole(new_vector(-cos((step/framerate)*speed)*radius,-sin((step/framerate)*speed)*radius) + center)
-    step += 1
-    return ret
   end
-  return {update=update}
+  
+  return cocreate(update)
 end
 
 Vector.scalarMult = function(_vec,_scalar)
@@ -311,14 +307,14 @@ end
 Body.metatable.__index = function(_table,_key)
   return Body.metatable[_key]
 end
---animation
+--parse animation
 function parse_sprite_frames(_comp_sprite_frames)
   --sprite frame format "n,x,y,w,h,flipx,flipy|...|n,x,y,w,h,flipx,flipy" all numbers
   local sprite_frames = {}
   local comp_sprites = split(_comp_sprite_frames,"|")
   for i=1,#comp_sprites do
     local sprite = split(comp_sprites[i],",")
-    add(sprite_frames,new_sprite(sprite[1],sprite[2],sprite[3],sprite[4],sprite[5],sprite[6],sprite[7]))
+    add(sprite_frames,new_sprite(sprite[1],sprite[2],sprite[3],sprite[4],sprite[5],sprite[6] == "1" and true or false,sprite[7] == "1" and true or false))
   end
   return sprite_frames
 end
@@ -337,7 +333,6 @@ function parse_displacement_frames(_comp_displacement_frames)
   local displacement_frames = {}
   local comp_displacements = split(_comp_displacement_frames,"|")
   for i=1,#comp_displacements do
-    printh(stringify_table(comp_displacements))
     local displacement = split(comp_displacements[i],",")
     add(displacement_frames,new_vector(displacement[1],displacement[2]))
   end
@@ -373,6 +368,7 @@ function new_clip(_compressed_frames,_sample_rate)
   end
   return {frames=frames,sample_rate=_sample_rate,length=length}
 end
+--animation
 function new_animation(_clip,_sprite,_hitbox,_position)
   local frame = 0
   local sample = 1
@@ -387,7 +383,7 @@ function new_animation(_clip,_sprite,_hitbox,_position)
           set_to(_hitbox,_clip.frames[sample].hitbox)
         end
         if _clip.frames[sample].displacement and _position then
-          position += _clip.frames[sample].displacement
+          set_to(_position,new_vector(_position.x+_clip.frames[sample].displacement.x,_position.y+_clip.frames[sample].displacement.y))
         end
       end
       frame += 1
@@ -607,7 +603,6 @@ function new_game(_starting_scene)
             end,
             start = function()
               if started == false then
-                printh("Starting Game")
                 active_scene.starting()
                 started = true
               end
@@ -643,17 +638,19 @@ entity_table = {}
 entity_table.baddy = 
 function(_x,_y)
   local sprite = new_sprite(4,0,0,2,2,false,false)
-  local end_point = new_vector(_x+50,_y+10)
-  local position = new_vector(_x,_y)
-  local co = Vector.Coroutines.MoveToInFrames(position,end_point,60)
-  local anim = new_animation(new_clip("0,1,1,1,1,1,1|2,1,1,1,1,1,1|32,1,1,1,1,1,1/10,-10,5,5|15,-15,5,5|10,-10,5,5/",20),sprite,hitbox,position,true)
+  local end_point = new_vector(64,64)
+  local position = new_vector(32,32)
+  local co = Vector.Animation.CircularMotion(position,end_point,.5)
+  local hitbox = new_hitbox()
+  local anim = new_animation(new_clip("32,1,1,2,2,0,0|34,1,1,2,2,0,0|32,1,1,2,2,0,0|34,1,1,2,2,1,0/8,4,5,-5|8,4,10,-10|8,4,5,-5/4,4|-4,-4",20),sprite,hitbox,position)
   return new_entity("baddy",
         {"enemy"},
         position,
         function (entity)
+          --coresume(co)
           coresume(anim,true)
-          printh(costatus(anim))
-          entity.position:ToWhole()
+          --entity.position:ToWhole()
+          --printh(stringify_table(position))
         end,
         function (entity)
           sprite:draw(entity)
@@ -725,10 +722,10 @@ __gfx__
 00020202020200000002020202020000000202020202000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000220220000000000022022000000000002202200000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000200020000000000020002000000000002000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000022200000000000002222000000000000222000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000200020000000000002002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000200020000000000020220000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00002200022000000000002022000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000022200000000000002222000000000000222200000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000200020000000000002002000000000000200200000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000200020000000000020220000000000002022000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00002200022000000000002022000000000000202200000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
