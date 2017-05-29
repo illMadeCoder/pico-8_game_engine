@@ -69,11 +69,15 @@ function stringify_table(_table,_tab)
   return ret .. num_to_tab(_tab) .. "}\n"
 end
 function split(_string,_split)
+  --on empty strings return empty object
+  if _string == "" or not _string then 
+    return {} 
+  end
   local ret = {}
   local cur = ""
   for i=1,#_string do
     local char = sub(_string,i,i)
-    if (char == _split) then
+    if char == _split then
       add(ret,cur)
       cur = ""
     else
@@ -106,8 +110,15 @@ end
 function lerp(_min,_max,_percent)
   return clamp((_max-_min)*_percent+_min,_min,_max)
 end
+function interval_intersect(_x1,_x2,_y1,_y2)
+  return max(_x1,_y1) <= min(_x2,_y2)
+end
+function rect_intersect(_x1,_y1,_width1,_height1,_x2,_y2,_width2,_height2)
+  return interval_intersect(_x1.x,_x1.x+_x1.width,_x2.x,_x2.x+_x2.width) and
+  interval_intersect(_x1.y,_x1.y+_x1.height,_x2.y,_x2.y+_x2.height)
+end
 function set_to(_tableA,_tableB)
-  --need test
+  --TEST
   for k,v in pairs(_tableA) do
     if type(_tableB[k]) != "table" then
       _tableA[k] = _tableB[k]
@@ -252,7 +263,15 @@ end
 
 --hitbox/body
 function new_hitbox(_x,_y,_width,_height,_name,_immaterial)
-  return {x=_x or 0,y=_y or 0,width=_width or 0,height=_height or 0,name=_name or "",immaterial=_immaterial or false,collisions={}}
+  return {
+    x=_x or 0,
+    y=_y or 0,
+    width=_width or 0,
+    height=_height or 0,
+    name=_name or "",
+    immaterial=_immaterial or false,
+    collisions={}
+  }
 end
 Body = {}
 Body.metatable = {}
@@ -261,23 +280,28 @@ function new_body(_hitboxes,_collision)
   setmetatable(ret,Body.metatable)
   return ret
 end
-Body.metatable.draw = function(_body,_entity)
-  for hitbox in all(_body.hitboxes) do
+Body.metatable.draw = function(_self,_entity)
+  for hitbox in all(_self.hitboxes) do
     rect(_entity.position.x+hitbox.x,_entity.position.y+hitbox.y,_entity.position.x+hitbox.x+hitbox.width,_entity.position.y+hitbox.y+hitbox.height,11)
   end  
 end
-Body.metatable.get_collisions = function(_body)
+Body.metatable.get_collisions = function(_self)
   local ret = {}
-  for hitbox in all(_body._hitboxes) do
+  for hitbox in all(_self.hitboxes) do
     if #hitbox.collision > 0 then
       add(ret,hitbox)
     end
   end
   return ret
 end
-Body.metatable.locate_hitbox = function(_body,_name)
+Body.metatable.clear_collisions = function(_self)
+  for hitbox in all(_self.hitboxes) do
+    hitbox.collisions = {}
+  end
+end
+Body.metatable.locate_hitbox = function(_self,_name)
   local ret = {}
-  for hitbox in all(_body._hitboxes) do
+  for hitbox in all(_self.hitboxes) do
     if hitbox.name == _name then
       add(ret,hitbox)
     end
@@ -308,42 +332,74 @@ function parse_hitbox_frames(_comp_hitbox_frames)
   end
   return hitbox_frames
 end
-function new_frame(_sprite,_hitbox)
-  return {sprite=_sprite,hitbox=_hitbox}
+function parse_displacement_frames(_comp_displacement_frames)
+  --format "x,y|..|x,y"
+  local displacement_frames = {}
+  local comp_displacements = split(_comp_displacement_frames,"|")
+  for i=1,#comp_displacements do
+    printh(stringify_table(comp_displacements))
+    local displacement = split(comp_displacements[i],",")
+    add(displacement_frames,new_vector(displacement[1],displacement[2]))
+  end
+  return displacement_frames
 end
-function new_clip(_comp_sprite_frames,_comp_hitbox_frames,_sample_rate)
-  local frames = {}
-  local sprite_frames = parse_sprite_frames(_comp_sprite_frames)
-  local hitbox_frames = parse_hitbox_frames(_comp_hitbox_frames)
-  local length = max(#sprite_frames,#hitbox_frames)
+function new_frame(_sprite,_hitbox,_displacement)
+  return {sprite=_sprite,hitbox=_hitbox,displacement=_displacement}
+end
+function parse_compressed_frame(_compressed_string)
+  --format: "compressed_sprite_frames/compressed_hitbox_frames/compressed_displacement_frames"
+  local compressed_frames = split(_compressed_string,"/")
+  return {parse_sprite_frames(compressed_frames[1]),parse_hitbox_frames(compressed_frames[2]),parse_displacement_frames(compressed_frames[3])}
+end
+function new_clip(_compressed_frames,_sample_rate)
+  --[[
+  --clip consists of frames, who are built via parse_compressed_frame 
+  --and contain compressed_sprite frames, compressed_hitbox frames, and compressed displacement frames
+  --a frame then contains the raw sprite,hitbox,and displacement which will be sampled
+  ]]--
+  local parsed_frames = parse_compressed_frame(_compressed_frames)
+  local frames,
+  sprite_frames,
+  hitbox_frames,
+  displacement_frames = 
+  {},
+  parsed_frames[1],
+  parsed_frames[2],
+  parsed_frames[3]
+  
+  local length = max(max(#sprite_frames,#hitbox_frames),#displacement_frames)
   for i=1,length do
-    add(frames,new_frame(sprite_frames[i],hitbox_frames[i]))
+    add(frames,new_frame(sprite_frames[i],hitbox_frames[i],displacement_frames[i]))
   end
   return {frames=frames,sample_rate=_sample_rate,length=length}
 end
-function new_animation(clip,sprite,hitbox,loop)
+function new_animation(_clip,_sprite,_hitbox,_position)
   local frame = 0
   local sample = 1
-  local update = function()
-    frame += 1
-    if frame % clip.sample_rate == 0 then
-      if sample > clip.length and loop then
-        sample = 1
-      elseif sample < clip.length then
-        sample += 1
+  
+  local anim = function (_loop)
+    while sample <= _clip.length do
+      if sample % 1 == 0 then
+        if _clip.frames[sample].sprite and _sprite then
+          set_to(_sprite,_clip.frames[sample].sprite)
+        end
+        if _clip.frames[sample].hitbox and _hitbox then
+          set_to(_hitbox,_clip.frames[sample].hitbox)
+        end
+        if _clip.frames[sample].displacement and _position then
+          position += _clip.frames[sample].displacement
+        end
       end
-    end
-    if clip.frames[sample] then
-      if clip.frames[sample].sprite then
-        set_to(sprite,clip.frames[sample].sprite)
+      frame += 1
+      sample = frame/_clip.sample_rate
+      if sample >= _clip.length and _loop then
+        frame = 0
       end
-      if clip.frames[sample].hitbox then
-        set_to(hitbox,clip.frames[sample].hitbox)
-      end
+      yield()
     end
   end
   
-  return {update=update}
+  return cocreate(anim)
 end
 --entity
 function new_entity(_name,_tag,_position,_update,_draw,_body,_model,_z)
@@ -362,7 +418,7 @@ function new_entity(_name,_tag,_position,_update,_draw,_body,_model,_z)
   return {
           name=_name or "NoName",
           tag=_tag or {},
-          position=_position or new_position(),
+          position=_position or x2ition(),
           update=_update or empty,
           draw=_draw or empty,
           body=_body or new_body(),
@@ -391,30 +447,27 @@ function new_scene(_starting,_ending,_update,_draw,_late_update,_model)
 end
 --game
 function new_game(_starting_scene)
-    local active_scene = _starting_scene
-    local entities = {}
-    local game_camera = {x=0,y=0,width=128,height=128}
-    local settings = {show_hitboxes=true,entities_active=true}
-    local frame = 0
-    local started = false
-    
-    local function interval_intersect(_x1,_x2,_y1,_y2)
-      return max(_x1,_y1) <= min(_x2,_y2)
-    end
-    
-    local function rect_intersect(_rect1,_rect2)
-      return interval_intersect(_rect1.x,_rect1.x+_rect1.width,_rect2.x,_rect2.x+_rect2.width) and
-      interval_intersect(_rect1.y,_rect1.y+_rect1.height,_rect2.y,_rect2.y+_rect2.height)
-    end
+    --Sorry this looks bad, token saver.
+    local 
+    active_scene, --_starting_scene
+    entities, --{}
+    game_camera, --{x=0,y=0,width=128,height=128}
+    settings, --{show_hitboxes=true,entities_active=true}
+    frame, --0
+    started =  --false
+    _starting_scene,
+    {},
+    {x=0,y=0,width=128,height=128},
+    {show_hitboxes=true,entities_active=true},
+    0,
+    false
     
     local function entity_collision(_fentity,_sentity)
       for _fhitbox in all(_fentity.body.hitboxes) do
         for _shitbox in all(_sentity.body.hitboxes) do
-          if (not _fhitbox.immaterial and not _shitbox.immaterial and 
-          rect_intersect(
-          new_rect(_fentity.position.x+_fhitbox.x,_fentity.position.y+_fhitbox.y,_fhitbox.width,_fhitbox.height),
-          new_rect(_sentity.position.x+_shitbox.x,_sentity.position.y+_shitbox.y,_shitbox.width,_shitbox.height))
-          ) then
+          if not _fhitbox.immaterial and not _shitbox.immaterial and 
+          rect_intersect(_fentity.position.x+_fhitbox.x,_fentity.position.y+_fhitbox.y,_fhitbox.width,_fhitbox.height,_sentity.position.x+_shitbox.x,_sentity.position.y+_shitbox.y,_shitbox.width,_shitbox.height)
+           then
             _fentity.body.collision(_fentity,_sentity)
             _sentity.body.collision(_sentity,_fentity)
             add(_fhitbox.collisions,{entity=_sentity,hitbox=_shitbox})
@@ -425,22 +478,24 @@ function new_game(_starting_scene)
     end
     
     local function exists_in_camera(_vec,_thresh)
+      --TEST
       _thresh = _thresh or 0
-      return (_vec.x+_thresh >= game_camera.x and _vec.x <= (game_camera.x+game_camera.width+_thresh) and
-              (_vec.y+_thresh) >= game_camera.y and _vec.y <= (game_camera.y+game_camera.height+_thresh))
+      return _vec.x+_thresh >= game_camera.x and _vec.x <= game_camera.x+game_camera.width+_thresh and
+              _vec.y+_thresh >= game_camera.y and _vec.y <= game_camera.y+game_camera.height+_thresh
     end
     
     local function collision_update(_entities)
       for i=1,#_entities do
+        _entities[i].body:clear_collisions()
         for j=i+1,#_entities do
-          if (exists_in_camera(_entities[i].vector,32) and exists_in_camera(_entities[i].vector,32)) then
+          if exists_in_camera(_entities[i].vector,32) and exists_in_camera(_entities[i].vector,32) then
             entity_collision(_entities[i],_entities[j])
           end
         end
       end
     end
     
-    local function rectcast (_rect)
+    local function rectcast(_rect)
       local ret = {}
       for entity in all(entities) do
         for hitbox in all(entity.body.hitboxes) do
@@ -452,7 +507,7 @@ function new_game(_starting_scene)
       return ret
     end 
     
-    local function get_entities_on_camera (_thresh)
+    local function get_entities_on_camera(_thresh)
       local ret = {}
       _thresh = _thresh or 0
       for entity in all(entities) do
@@ -463,19 +518,19 @@ function new_game(_starting_scene)
       return ret
     end
     --Entity API
-    local function add_entity (_entity)
-      if (type(_entity) == "table" and _entity.name != nil) then
+    local function add_entity(_entity)
+      if type(_entity) == "table" and _entity.name != nil then
         add(entities,_entity)
       end
     end
-    local function remove_entity (_entity)
+    local function remove_entity(_entity)
       del(entities,_entity)
     end
-    local function empty_entities ()
+    local function empty_entities()
       for k,v in pairs(entities) do entities[k] = nil end
       entities = {}
     end
-    local function locate_entity_name (_name)
+    local function locate_entity_name(_name)
       local ret = {}
       for entity in all(entities) do
         if entity.name == _name then
@@ -484,7 +539,7 @@ function new_game(_starting_scene)
       end
       return ret
     end
-    local function locate_entity_tag (_tag)
+    local function locate_entity_tag(_tag)
       local ret = {}
       for entity in all(entities) do
         if exists(entity.tags,_tag) then
@@ -493,11 +548,11 @@ function new_game(_starting_scene)
       end
       return ret
     end
-    local function get_entities ()
+    local function get_entities()
       return entities
     end
     --Frame API
-    local function update ()
+    local function update()
       --Update Scene
       active_scene.update()
       active_scene.frame += 1
@@ -518,16 +573,16 @@ function new_game(_starting_scene)
       active_scene.draw()
       
       local function z_indexed()
-        --testing and revision
+        --TEST
         local ret,z_ordered,z_low,z_high = {},{},0,0
         for entity in all(entities) do
-          if (entity.z < z_low) then
+          if entity.z < z_low then
             z_low = entity.z
           end
-          if (entity.z > z_high) then
+          if entity.z > z_high then
             z_high = entity.z
           end
-          if (z_ordered[entity.z] == nil) then
+          if z_ordered[entity.z] == nil then
             z_ordered[entity.z] = {}
           end
           add(z_ordered[entity.z],entity)
@@ -541,7 +596,7 @@ function new_game(_starting_scene)
       end
       for entity in all(z_indexed()) do
         entity.draw(entity)
-        if (settings.show_hitboxes == true) then
+        if settings.show_hitboxes == true then
           entity.body:draw(entity)
         end
       end
@@ -550,7 +605,7 @@ function new_game(_starting_scene)
             get_frame = function()
               return frame
             end,
-            start = function ()
+            start = function()
               if started == false then
                 printh("Starting Game")
                 active_scene.starting()
@@ -559,7 +614,7 @@ function new_game(_starting_scene)
             end,
             update=update,
             draw=draw,
-            switch_scene=function (scene)
+            switch_scene=function(scene)
               active_scene.ending()
               active_scene = scene
               active_scene.starting()
@@ -575,10 +630,10 @@ function new_game(_starting_scene)
             exists_in_camera=exists_in_camera,
             camera=game_camera,
             active_scene=active_scene,
-            pause = function () 
+            pause = function() 
               settings.entities_active = false
             end,
-            unpause = function ()
+            unpause = function()
               settings.entities_active = true
             end
             }
@@ -586,17 +641,18 @@ end
 
 entity_table = {}
 entity_table.baddy = 
-function (_x,_y)
+function(_x,_y)
   local sprite = new_sprite(4,0,0,2,2,false,false)
   local end_point = new_vector(_x+50,_y+10)
   local position = new_vector(_x,_y)
   local co = Vector.Coroutines.MoveToInFrames(position,end_point,60)
-  local anim = new_animation(new_clip("0,1,1,1,1,1,1|2,1,1,1,1,1,1|32,1,1,1,1,1,1","10,-10,5,5|15,-15,5,5|10,-10,5,5",20),sprite,hitbox,true)
+  local anim = new_animation(new_clip("0,1,1,1,1,1,1|2,1,1,1,1,1,1|32,1,1,1,1,1,1/10,-10,5,5|15,-15,5,5|10,-10,5,5/",20),sprite,hitbox,position,true)
   return new_entity("baddy",
         {"enemy"},
         position,
         function (entity)
-          coresume(co)
+          coresume(anim,true)
+          printh(costatus(anim))
           entity.position:ToWhole()
         end,
         function (entity)
