@@ -30,35 +30,19 @@ function ceil(_x)
   return flr(_x+1)
 end
 function sign(_x)
-  if _x > 0 then
-    return 1
-  elseif _x < 0 then
-    return -1
-  else 
-    return 0
-  end
+  return _x > 0 and 1 or _x < 0 and -1 or 0
 end
 function round(_x)
-  if abs(_x) % 1 >= .5 then
-    if sign(_x) == 1 then
-      return ceil(_x)
-    else
-      return flr(_x)
-    end
+  if _x % 1 == 0 then
+    return _x
+  elseif _x % 1 >= .5 then
+    return sign(_x) == 1 and ceil(_x) or flr(_x)
   else
-    if sign(_x) == 1 then
-      return flr(_x)
-    else
-      return ceil(_x)
-    end
+    return sign(_x) == 1 and flr(_x) or ceil(_x) 
   end
 end
 function bool_to_str(_bool)
-  if _bool then
-    return "true"
-  else
-    return "false"
-  end
+  return _bool and "true" or "false"
 end
 function stringify_table(_table,_tab)
   local function num_to_tab(_num) 
@@ -114,31 +98,24 @@ function in_range(_x,_a,_b)
   return _x >= _a and _x <= _b
 end
 function clamp(_x,_a,_b)
-  if _x <= _a then
-    return _a
-  elseif _x >= _b then
-    return _b
-  else
-    return _x
-  end
+  return _x <= _a and _a or _x >= _b and _b or _x
 end
 function norm(_x,_min,_max) 
   return (_x-_min)/(_max-_min)
 end
-function lerp(_percent,_min,_max)
-  if _percent >= 1 then
-    return _max
-  elseif _percent <= 0 then
-    return _min
-  end
-  return (_max-_min)*_percent+_min
+function lerp(_min,_max,_percent)
+  return clamp((_max-_min)*_percent+_min,_min,_max)
 end
 function set_to(_tableA,_tableB)
+  --need test
   for k,v in pairs(_tableA) do
-    _tableA[k] = _tableB[k]
+    if type(_tableB[k]) != "table" then
+      _tableA[k] = _tableB[k]
+    else
+      set_to(_tableA[k],_tableB[k])
+    end
   end
 end
-
 --types
 --rect
 function new_rect(_x,_y,_width,_height)
@@ -149,7 +126,7 @@ end
 Vector = {}
 Vector.metatable = {}
 function new_vector(_x,_y)
-  local ret = {x=_x,y=_y}
+  local ret = {x=_x or 0,y=_y or 0}
   setmetatable(ret,Vector.metatable)
   return ret
 end
@@ -165,26 +142,39 @@ end
 Vector.metatable.Set = function(_self,_x,_y)
   _self.x,_self.y = _x or 0, _y or 0
 end
+Vector.metatable.SetTo = function(_self,_other)
+  _self:Set(_other.x,_other.y)
+end
 Vector.metatable.ToWhole = function(_self)
   _self:Set(round(_self.x),round(_self.y))
 end
-Vector.metatable.Lerp = function(_self,_to,_speed)
-  --Speed determines how many seconds to take,, 1 = 1 second, .5 = half a second
-  local step = -1
-  local dif = _to-_from
-  local update = function(_new_speed)
-    _speed = _new_speed or _speed
-    step += 1
-    if step/(framerate*_speed) >= 1 then
-      return _to
-    else
-      return new_vector(lerp(step/(framerate*_speed),_from.x,_to.x),lerp(step/(framerate*_speed),_from.y,_to.y))
+Vector.metatable.Lerp = function(_self,_start,_end,_t)
+  --Linear interporlate between two points by some fraction _t, 0==_start,.5==vector between _start,_end,1==_end
+  _self:Set(lerp(_start.x,_end.x,_t),lerp(_start.y,_end.y,_t))  
+end
+Vector.metatable.MoveTowards = function(_self,_to,_speed)
+  --Moves a vector _self in the direction towards _to, _speed pixels
+  _speed = _speed or 1
+  if Vector.approxEqual(_self,_to,_speed) then
+    _self:SetTo(_to)
+  else
+    _self:SetTo(_self + Vector.scalarMult(Vector.unit_towards(_self,_to),_speed))
+  end
+end
+Vector.Coroutines = {}
+Vector.Coroutines.MoveToInFrames = function(_self,_end,_framesToReachTarget)
+  --Linear interporlate between two points givin some count of frames
+  local start,tick = new_vector(_self.x,_self.y),0
+
+  local function coroutine ()
+    while tick/_framesToReachTarget <= 1 do
+      tick += 1
+      _self:Lerp(start,_end,tick/_framesToReachTarget)
+      yield()
     end
   end
-  local is_fin = function()
-    return step/(framerate*_speed) >= 1
-  end
-  return {update=update,is_fin=is_fin}
+  
+  return cocreate(coroutine)
 end
 Vector.metatable.CircularMotion = function(start_vec,center,speed)
   --[[
@@ -210,15 +200,6 @@ Vector.metatable.CircularMotion = function(start_vec,center,speed)
   end
   return {update=update}
 end
-Vector.metatable.MoveTowards = function(_self,_to,_speed,_thresh)
-  --Rec thresh of .2 or higher
-  _speed,_thresh,_smooth = _speed or 1,_thresh or 1,_smooth or false
-  if not Vector.aproxEqual(_from,_to,_thresh) then
-    return Vector.ToWhole(_from + Vector.scalarMult(Vector.normalize(_to-_from),_speed))
-  else
-    return Vector.ToWhole(_to)
-  end
-end
 
 Vector.scalarMult = function(_vec,_scalar)
   return new_vector(_vec.x*_scalar,_vec.y*_scalar)
@@ -235,13 +216,16 @@ end
 Vector.magnitude = function(_vec)
   return sqrt(_vec.x*_vec.x + _vec.y*_vec.y)
 end
+Vector.unit_towards = function(_from,_to)
+  return Vector.normalize(_to-_from)
+end
 Vector.scale = function(_vecA,_vecB)
   return new_vector(_vecA.x*_vecB.x,_vecA.y*_vecB.y)
 end
 Vector.distance = function(_vecA,_vecB)
   return Vector.magnitude(_vecA-_vecB)
 end
-Vector.aproxEqual = function (_a,_b,_thresh)
+Vector.approxEqual = function (_a,_b,_thresh)
   _thresh = _thresh or 1
   local dif = _a-_b
   return in_range(dif.x,-_thresh,_thresh) and in_range(dif.y,-_thresh,_thresh)
@@ -255,7 +239,7 @@ Right = new_vector(1,0)
 Sprite = {}
 Sprite.metatable = {}
 Sprite.metatable.draw = function (_sprite,_entity)
-  spr(_sprite.n,_entity.vector.x+_sprite.x,_entity.vector.y+_sprite.y,_sprite.width,_sprite.height,_sprite.flipx,_sprite.flipy)
+  spr(_sprite.n,_entity.position.x+_sprite.x,_entity.position.y+_sprite.y,_sprite.width,_sprite.height,_sprite.flipx,_sprite.flipy)
 end
 Sprite.metatable.__index = function (_table,_key)
   return Sprite.metatable[_key]
@@ -272,9 +256,14 @@ function new_hitbox(_x,_y,_width,_height,_name,_immaterial)
 end
 Body = {}
 Body.metatable = {}
+function new_body(_hitboxes,_collision)
+  local ret = {hitboxes=_hitboxes or {},collision=_collision or empty}
+  setmetatable(ret,Body.metatable)
+  return ret
+end
 Body.metatable.draw = function(_body,_entity)
   for hitbox in all(_body.hitboxes) do
-    rect(_entity.vector.x+hitbox.x,_entity.vector.y+hitbox.y,_entity.vector.x+hitbox.x+hitbox.width,_entity.vector.y+hitbox.y+hitbox.height,11)
+    rect(_entity.position.x+hitbox.x,_entity.position.y+hitbox.y,_entity.position.x+hitbox.x+hitbox.width,_entity.position.y+hitbox.y+hitbox.height,11)
   end  
 end
 Body.metatable.get_collisions = function(_body)
@@ -295,19 +284,12 @@ Body.metatable.locate_hitbox = function(_body,_name)
   end
   return ret
 end
-Body.__index = function(_table,_key)
-  return Body[_key]
-end
-function new_body(_hitboxes,_collision)
-  local ret = {hitboxes=_hitboxes,collision=_collision}
-  setmetatable(ret,Body)
-  return ret
+Body.metatable.__index = function(_table,_key)
+  return Body.metatable[_key]
 end
 --animation
 function parse_sprite_frames(_comp_sprite_frames)
-  --[[
-  sprite frame format "n,x,y,w,h,flipx,flipy|...|n,x,y,w,h,flipx,flipy" all numbers
-  ]]--
+  --sprite frame format "n,x,y,w,h,flipx,flipy|...|n,x,y,w,h,flipx,flipy" all numbers
   local sprite_frames = {}
   local comp_sprites = split(_comp_sprite_frames,"|")
   for i=1,#comp_sprites do
@@ -317,9 +299,7 @@ function parse_sprite_frames(_comp_sprite_frames)
   return sprite_frames
 end
 function parse_hitbox_frames(_comp_hitbox_frames)
-  --[[
-  hitbox frame format "x,y,w,h,name|..|x,y,w,h,name" all numbers
-  ]]--
+  --hitbox frame format "x,y,w,h,name|..|x,y,w,h,name" all numbers
   local hitbox_frames = {}
   local comp_hitboxes = split(_comp_hitbox_frames,"|")
   for i=1,#comp_hitboxes do
@@ -366,8 +346,8 @@ function new_animation(clip,sprite,hitbox,loop)
   return {update=update}
 end
 --entity
-function new_entity(_name,_tag,_vector,_update,_draw,_body,_model,_z)
-  --an entity is a data structure meant to be used by the game to create some effect
+function new_entity(_name,_tag,_position,_update,_draw,_body,_model,_z)
+  --[[an entity is a data structure meant to be used by the game to create some effect
   --an entity is defined by the following:
   --name is a string to identify the object in memory
   --vector is an object of the new_vector function to provide a spatial vector to the object
@@ -375,25 +355,36 @@ function new_entity(_name,_tag,_vector,_update,_draw,_body,_model,_z)
   --draw is a function to be called each render
   --model is a table container for an entity's state
   --z is the z index to be drawn
+  
+  --if you want a 'start' function, a function to be called on the first frame of the entity's existense,
+  --do a if (entity.frame == 0) check
+  --]]
   return {
-          name=_name,
-          tag=_tag,
-          vector=_vector,
-          update=_update,
-          body=_body,
-          draw=_draw,
+          name=_name or "NoName",
+          tag=_tag or {},
+          position=_position or new_position(),
+          update=_update or empty,
+          draw=_draw or empty,
+          body=_body or new_body(),
           model=_model or {},
           z=_z or 0,
           frame=0
         }
 end
 function new_scene(_starting,_ending,_update,_draw,_late_update,_model)
+--[[
+--A scene is a manager for any particular segments of a game and should be used as a tool
+--to control game state. Each game runs an initial scene, and then from there a scene may
+--transition via game.switch_scene(scene) where first the ending function of a scene will be called
+--followed then by the new scene's starting() function.
+--game.active_scene is the current running scene
+]]--
   return {
         starting=_starting or empty,
         ending=_ending or empty,
         update=_update or empty,
         draw=_draw  or empty,
-        late_update=_late_update  or empty,
+        late_update=_late_update or empty,
         model=_model or {},
         frame=0
       }
@@ -402,7 +393,7 @@ end
 function new_game(_starting_scene)
     local active_scene = _starting_scene
     local entities = {}
-    local game_camera = {x=0,y=0,width=126,height=126}
+    local game_camera = {x=0,y=0,width=128,height=128}
     local settings = {show_hitboxes=true,entities_active=true}
     local frame = 0
     local started = false
@@ -421,8 +412,8 @@ function new_game(_starting_scene)
         for _shitbox in all(_sentity.body.hitboxes) do
           if (not _fhitbox.immaterial and not _shitbox.immaterial and 
           rect_intersect(
-          new_rect(_fentity.vector.x+_fhitbox.x,_fentity.vector.y+_fhitbox.y,_fhitbox.width,_fhitbox.height),
-          new_rect(_sentity.vector.x+_shitbox.x,_sentity.vector.y+_shitbox.y,_shitbox.width,_shitbox.height))
+          new_rect(_fentity.position.x+_fhitbox.x,_fentity.position.y+_fhitbox.y,_fhitbox.width,_fhitbox.height),
+          new_rect(_sentity.position.x+_shitbox.x,_sentity.position.y+_shitbox.y,_shitbox.width,_shitbox.height))
           ) then
             _fentity.body.collision(_fentity,_sentity)
             _sentity.body.collision(_sentity,_fentity)
@@ -449,11 +440,11 @@ function new_game(_starting_scene)
       end
     end
     
-    local rectcast = function (_rect)
+    local function rectcast (_rect)
       local ret = {}
       for entity in all(entities) do
         for hitbox in all(entity.body.hitboxes) do
-          if rect_intersect(_rect, new_rect(entity.vector.x+hitbox.x,entity.vector.y+hitbox.y,hitbox.width,hitbox.height)) then
+          if rect_intersect(_rect, new_rect(entity.position.x+hitbox.x,entity.position.y+hitbox.y,hitbox.width,hitbox.height)) then
             add(ret,entity)
           end
         end
@@ -461,30 +452,30 @@ function new_game(_starting_scene)
       return ret
     end 
     
-    local get_entities_on_camera = function (_thresh)
+    local function get_entities_on_camera (_thresh)
       local ret = {}
       _thresh = _thresh or 0
       for entity in all(entities) do
-        if exists_in_camera(entity.vector,_thresh) then
+        if exists_in_camera(entity.position,_thresh) then
           add(ret,entity)
         end
       end
       return ret
     end
     --Entity API
-    local add_entity = function (_entity)
+    local function add_entity (_entity)
       if (type(_entity) == "table" and _entity.name != nil) then
         add(entities,_entity)
       end
     end
-    local remove_entity = function (_entity)
+    local function remove_entity (_entity)
       del(entities,_entity)
     end
-    local empty_entities = function ()
+    local function empty_entities ()
       for k,v in pairs(entities) do entities[k] = nil end
       entities = {}
     end
-    local locate_entity_name = function (_name)
+    local function locate_entity_name (_name)
       local ret = {}
       for entity in all(entities) do
         if entity.name == _name then
@@ -493,7 +484,7 @@ function new_game(_starting_scene)
       end
       return ret
     end
-    local locate_entity_tag = function (_tag)
+    local function locate_entity_tag (_tag)
       local ret = {}
       for entity in all(entities) do
         if exists(entity.tags,_tag) then
@@ -502,11 +493,11 @@ function new_game(_starting_scene)
       end
       return ret
     end
-    local get_entities = function ()
+    local function get_entities ()
       return entities
     end
     --Frame API
-    local update = function ()
+    local function update ()
       --Update Scene
       active_scene.update()
       active_scene.frame += 1
@@ -521,12 +512,13 @@ function new_game(_starting_scene)
       end
       frame += 1
     end
-    local draw = function ()
+    local function draw ()
       cls()
       camera(-game_camera.x,-game_camera.y)
       active_scene.draw()
       
       local function z_indexed()
+        --testing and revision
         local ret,z_ordered,z_low,z_high = {},{},0,0
         for entity in all(entities) do
           if (entity.z < z_low) then
@@ -582,6 +574,7 @@ function new_game(_starting_scene)
             get_entities_on_camera=get_entities_on_camera,
             exists_in_camera=exists_in_camera,
             camera=game_camera,
+            active_scene=active_scene,
             pause = function () 
               settings.entities_active = false
             end,
@@ -593,13 +586,18 @@ end
 
 entity_table = {}
 entity_table.baddy = 
-function (_x,_y,_to,_type)
+function (_x,_y)
   local sprite = new_sprite(4,0,0,2,2,false,false)
+  local end_point = new_vector(_x+50,_y+10)
+  local position = new_vector(_x,_y)
+  local co = Vector.Coroutines.MoveToInFrames(position,end_point,60)
   local anim = new_animation(new_clip("0,1,1,1,1,1,1|2,1,1,1,1,1,1|32,1,1,1,1,1,1","10,-10,5,5|15,-15,5,5|10,-10,5,5",20),sprite,hitbox,true)
   return new_entity("baddy",
         {"enemy"},
-        new_vector(_x,_y),
+        position,
         function (entity)
+          coresume(co)
+          entity.position:ToWhole()
         end,
         function (entity)
           sprite:draw(entity)
