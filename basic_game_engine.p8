@@ -24,6 +24,8 @@ Colours indexes:
   	12  blue   13  indigo     14  pink         15  peach
 ]]--
 --helpers
+function empty()
+end
 function ceil(_x)
   return flr(_x+1)
 end
@@ -97,8 +99,6 @@ function split(_string,_split)
   add(ret,cur)
   return ret
 end
-function empty()
-end
 function print_center(str,x,y,col)
   print(str,x+((4-#str*4)/2),y,col)
 end
@@ -145,36 +145,30 @@ function new_rect(_x,_y,_width,_height)
   return {x=_x,y=_y,width=_width,height=_height}
 end
 --tween
---Position
-Position = {}
-Position.Set = function(_pos,_x,_y)
-  _pos.x,_pos.y = _x or 0, _y or 0
+--2D Vector
+Vector = {}
+Vector.metatable = {}
+function new_vector(_x,_y)
+  local ret = {x=_x,y=_y}
+  setmetatable(ret,Vector.metatable)
+  return ret
 end
-Position.CircularMotion = function(start_pos,center,speed)
-  --[[
-  CircularMotion takes a starting positiong a center and a speed, 
-  given the start position and center, find a vector dif from center to start_pos,
-  use the magnitude of dif to find the circle radius, use the angle between the components of dif to find the start location on the circle,
-  set the step to the appropriate starting location
-  ]]--
-  local dif = center - start_pos
-  local radius = Position.Magnitude(dif) 
-  local step = atan2(dif.x,dif.y)*framerate/speed
-  
-  local update = function (_displace,_speed)
-    if _displace then
-      center += _displace
-    end
-    if _speed then
-      speed += _speed
-    end
-    local ret = Position.ToWhole(new_position(-cos((step/framerate)*speed)*radius,-sin((step/framerate)*speed)*radius) + center)
-    step += 1
-    return ret
-  end
-  return {update=update}
+Vector.metatable.__index = function(_table,_key)
+  return Vector.metatable[_key]
 end
-Position.LerpTo = function(_from,_to,_speed)
+Vector.metatable.__add = function(_a,_b)
+  return new_vector(_a.x+_b.x,_a.y+_b.y)
+end
+Vector.metatable.__sub = function(_a,_b)
+  return new_vector(_a.x-_b.x,_a.y-_b.y)
+end
+Vector.metatable.Set = function(_self,_x,_y)
+  _self.x,_self.y = _x or 0, _y or 0
+end
+Vector.metatable.ToWhole = function(_self)
+  _self:Set(round(_self.x),round(_self.y))
+end
+Vector.metatable.Lerp = function(_self,_to,_speed)
   --Speed determines how many seconds to take,, 1 = 1 second, .5 = half a second
   local step = -1
   local dif = _to-_from
@@ -184,7 +178,7 @@ Position.LerpTo = function(_from,_to,_speed)
     if step/(framerate*_speed) >= 1 then
       return _to
     else
-      return new_position(lerp(step/(framerate*_speed),_from.x,_to.x),lerp(step/(framerate*_speed),_from.y,_to.y))
+      return new_vector(lerp(step/(framerate*_speed),_from.x,_to.x),lerp(step/(framerate*_speed),_from.y,_to.y))
     end
   end
   local is_fin = function()
@@ -192,66 +186,83 @@ Position.LerpTo = function(_from,_to,_speed)
   end
   return {update=update,is_fin=is_fin}
 end
-Position.Magnitude = function(_pos)
-  return sqrt(_pos.x*_pos.x + _pos.y*_pos.y)
-end
-Position.AproxEqual = function (_a,_b,_thresh)
-  _thresh = _thresh or 1
-  local dif = _a-_b
-  if in_range(dif.x,-_thresh,_thresh) and in_range(dif.y,-_thresh,_thresh) then
-    return true
-  else 
-    return false
+Vector.metatable.CircularMotion = function(start_vec,center,speed)
+  --[[
+  CircularMotion takes a starting vectorg a center and a speed, 
+  given the start vector and center, find a vector dif from center to start_vec,
+  use the magnitude of dif to find the circle radius, use the angle between the components of dif to find the start location on the circle,
+  set the step to the appropriate starting location
+  ]]--
+  local dif = center - start_vec
+  local radius = Vector.magnitude(dif) 
+  local step = atan2(dif.x,dif.y)*framerate/speed
+  
+  local update = function (_displace,_speed)
+    if _displace then
+      center += _displace
+    end
+    if _speed then
+      speed += _speed
+    end
+    local ret = Vector.ToWhole(new_vector(-cos((step/framerate)*speed)*radius,-sin((step/framerate)*speed)*radius) + center)
+    step += 1
+    return ret
   end
+  return {update=update}
 end
-Position.ToWhole = function(_pos)
-  _pos:set(round(_pos.x),round(_pos.y))
-end
-Position.MoveTowards = function(_from,_to,_speed,_thresh)
+Vector.metatable.MoveTowards = function(_self,_to,_speed,_thresh)
   --Rec thresh of .2 or higher
   _speed,_thresh,_smooth = _speed or 1,_thresh or 1,_smooth or false
-  if not Position.AproxEqual(_from,_to,_thresh) then
-    return Position.ToWhole(_from + Position.ScalarMult(Position.Normalize(_to-_from),_speed))
+  if not Vector.aproxEqual(_from,_to,_thresh) then
+    return Vector.ToWhole(_from + Vector.scalarMult(Vector.normalize(_to-_from),_speed))
   else
-    return Position.ToWhole(_to)
+    return Vector.ToWhole(_to)
   end
 end
-Position.ScalarMult = function(_pos,_scalar)
-  return new_position(_pos.x*_scalar,_pos.y*_scalar)
+
+Vector.scalarMult = function(_vec,_scalar)
+  return new_vector(_vec.x*_scalar,_vec.y*_scalar)
 end
-Position.Normalize = function(_pos)
-  return new_position(_pos.x/Position.Magnitude(_pos),_pos.y/Position.Magnitude(_pos))
+Vector.normalize = function(_vec)
+  return new_vector(_vec.x/Vector.magnitude(_vec),_vec.y/Vector.magnitude(_vec))
 end
-Position.__add = function(_a,_b)
-  return new_position(_a.x+_b.x,_a.y+_b.y)
+Vector.dot = function(_a,_b)
+  return _a.x*_b.x+_a.y*_b.y
 end
-Position.__sub = function(_a,_b)
-  return new_position(_a.x-_b.x,_a.y-_b.y)
+Vector.inv = function(_a)
+  return Vector.scalarMult(_a,-1)
 end
-Position.__index = function(_table,_key)
-  return Position[_key]
+Vector.magnitude = function(_vec)
+  return sqrt(_vec.x*_vec.x + _vec.y*_vec.y)
 end
-function new_position(_x,_y)
-  local ret = {x=_x,y=_y}
-  setmetatable(ret,Position)
-  return ret
+Vector.scale = function(_vecA,_vecB)
+  return new_vector(_vecA.x*_vecB.x,_vecA.y*_vecB.y)
 end
-Up = new_position(0,-1)
-Down = new_position(0,1)
-Left = new_position(-1,0)
-Right = new_position(1,0)
+Vector.distance = function(_vecA,_vecB)
+  return Vector.magnitude(_vecA-_vecB)
+end
+Vector.aproxEqual = function (_a,_b,_thresh)
+  _thresh = _thresh or 1
+  local dif = _a-_b
+  return in_range(dif.x,-_thresh,_thresh) and in_range(dif.y,-_thresh,_thresh)
+end
+Up = new_vector(0,-1)
+Down = new_vector(0,1)
+Left = new_vector(-1,0)
+Right = new_vector(1,0)
 
 --Sprite
 Sprite = {}
-Sprite.draw = function (_sprite,_entity)
-  spr(_sprite.n,_entity.position.x+_sprite.x,_entity.position.y+_sprite.y,_sprite.width,_sprite.height,_sprite.flipx,_sprite.flipy)
+Sprite.metatable = {}
+Sprite.metatable.draw = function (_sprite,_entity)
+  spr(_sprite.n,_entity.vector.x+_sprite.x,_entity.vector.y+_sprite.y,_sprite.width,_sprite.height,_sprite.flipx,_sprite.flipy)
 end
-Sprite.__index = function (_table,_key)
-  return Sprite[_key]
+Sprite.metatable.__index = function (_table,_key)
+  return Sprite.metatable[_key]
 end
 function new_sprite(n,x,y,width,height,flipx,flipy)
   local ret = {n=n or 0,x=x or 0, y = y or 0, width = width or 0, height = height or 0, flipx = flipx or false, flipy = flipy or false}
-  setmetatable(ret,Sprite)
+  setmetatable(ret,Sprite.metatable)
   return ret
 end
 
@@ -260,12 +271,13 @@ function new_hitbox(_x,_y,_width,_height,_name,_immaterial)
   return {x=_x or 0,y=_y or 0,width=_width or 0,height=_height or 0,name=_name or "",immaterial=_immaterial or false,collisions={}}
 end
 Body = {}
-Body.draw = function(_body,_entity)
+Body.metatable = {}
+Body.metatable.draw = function(_body,_entity)
   for hitbox in all(_body.hitboxes) do
-    rect(_entity.position.x+hitbox.x,_entity.position.y+hitbox.y,_entity.position.x+hitbox.x+hitbox.width,_entity.position.y+hitbox.y+hitbox.height,11)
+    rect(_entity.vector.x+hitbox.x,_entity.vector.y+hitbox.y,_entity.vector.x+hitbox.x+hitbox.width,_entity.vector.y+hitbox.y+hitbox.height,11)
   end  
 end
-Body.get_collisions = function(_body)
+Body.metatable.get_collisions = function(_body)
   local ret = {}
   for hitbox in all(_body._hitboxes) do
     if #hitbox.collision > 0 then
@@ -274,7 +286,7 @@ Body.get_collisions = function(_body)
   end
   return ret
 end
-Body.locate_hitbox = function(_body,_name)
+Body.metatable.locate_hitbox = function(_body,_name)
   local ret = {}
   for hitbox in all(_body._hitboxes) do
     if hitbox.name == _name then
@@ -354,11 +366,11 @@ function new_animation(clip,sprite,hitbox,loop)
   return {update=update}
 end
 --entity
-function new_entity(_name,_tag,_position,_update,_draw,_body,_model,_z)
+function new_entity(_name,_tag,_vector,_update,_draw,_body,_model,_z)
   --an entity is a data structure meant to be used by the game to create some effect
   --an entity is defined by the following:
   --name is a string to identify the object in memory
-  --position is an object of the new_position function to provide a spatial position to the object
+  --vector is an object of the new_vector function to provide a spatial vector to the object
   --update is a function to be called each frame
   --draw is a function to be called each render
   --model is a table container for an entity's state
@@ -366,7 +378,7 @@ function new_entity(_name,_tag,_position,_update,_draw,_body,_model,_z)
   return {
           name=_name,
           tag=_tag,
-          position=_position,
+          vector=_vector,
           update=_update,
           body=_body,
           draw=_draw,
@@ -409,8 +421,8 @@ function new_game(_starting_scene)
         for _shitbox in all(_sentity.body.hitboxes) do
           if (not _fhitbox.immaterial and not _shitbox.immaterial and 
           rect_intersect(
-          new_rect(_fentity.position.x+_fhitbox.x,_fentity.position.y+_fhitbox.y,_fhitbox.width,_fhitbox.height),
-          new_rect(_sentity.position.x+_shitbox.x,_sentity.position.y+_shitbox.y,_shitbox.width,_shitbox.height))
+          new_rect(_fentity.vector.x+_fhitbox.x,_fentity.vector.y+_fhitbox.y,_fhitbox.width,_fhitbox.height),
+          new_rect(_sentity.vector.x+_shitbox.x,_sentity.vector.y+_shitbox.y,_shitbox.width,_shitbox.height))
           ) then
             _fentity.body.collision(_fentity,_sentity)
             _sentity.body.collision(_sentity,_fentity)
@@ -421,16 +433,16 @@ function new_game(_starting_scene)
       end
     end
     
-    local function exists_in_camera(_pos,_thresh)
+    local function exists_in_camera(_vec,_thresh)
       _thresh = _thresh or 0
-      return (_pos.x+_thresh >= game_camera.x and _pos.x <= (game_camera.x+game_camera.width+_thresh) and
-              (_pos.y+_thresh) >= game_camera.y and _pos.y <= (game_camera.y+game_camera.height+_thresh))
+      return (_vec.x+_thresh >= game_camera.x and _vec.x <= (game_camera.x+game_camera.width+_thresh) and
+              (_vec.y+_thresh) >= game_camera.y and _vec.y <= (game_camera.y+game_camera.height+_thresh))
     end
     
     local function collision_update(_entities)
       for i=1,#_entities do
         for j=i+1,#_entities do
-          if (exists_in_camera(_entities[i].position,32) and exists_in_camera(_entities[i].position,32)) then
+          if (exists_in_camera(_entities[i].vector,32) and exists_in_camera(_entities[i].vector,32)) then
             entity_collision(_entities[i],_entities[j])
           end
         end
@@ -441,7 +453,7 @@ function new_game(_starting_scene)
       local ret = {}
       for entity in all(entities) do
         for hitbox in all(entity.body.hitboxes) do
-          if rect_intersect(_rect, new_rect(entity.position.x+hitbox.x,entity.position.y+hitbox.y,hitbox.width,hitbox.height)) then
+          if rect_intersect(_rect, new_rect(entity.vector.x+hitbox.x,entity.vector.y+hitbox.y,hitbox.width,hitbox.height)) then
             add(ret,entity)
           end
         end
@@ -453,7 +465,7 @@ function new_game(_starting_scene)
       local ret = {}
       _thresh = _thresh or 0
       for entity in all(entities) do
-        if exists_in_camera(entity.position,_thresh) then
+        if exists_in_camera(entity.vector,_thresh) then
           add(ret,entity)
         end
       end
@@ -583,25 +595,11 @@ entity_table = {}
 entity_table.baddy = 
 function (_x,_y,_to,_type)
   local sprite = new_sprite(4,0,0,2,2,false,false)
-  local flag = false
-  local circ = Position.CircularMotion(new_position(0,2),new_position(16,16),1)
-  local ler = Position.LerpTo(new_position(0,0),new_position(25,0),.1)
-  local hitbox = new_hitbox(0,0,0,0)
-  _to = new_position(0,2)
   local anim = new_animation(new_clip("0,1,1,1,1,1,1|2,1,1,1,1,1,1|32,1,1,1,1,1,1","10,-10,5,5|15,-15,5,5|10,-10,5,5",20),sprite,hitbox,true)
   return new_entity("baddy",
         {"enemy"},
-        new_position(_x,_y),
+        new_vector(_x,_y),
         function (entity)
-          anim.update()
-          if flag == false and not Position.AproxEqual(entity.position,_to) then
-            entity.position = ler.update()
-          else
-            flag = true 
-          end
-          if flag then
-            entity.position = circ.update(Down+Right)
-          end
         end,
         function (entity)
           sprite:draw(entity)
@@ -609,7 +607,7 @@ function (_x,_y,_to,_type)
         new_body({new_hitbox(0,8,16,8),hitbox}, 
         function (entity,coll)
         end),
-        {state="start",left=0,right=0,turn="left"}
+        {}
         ) 
   end
         
@@ -618,7 +616,7 @@ scene_table = {}
 scene_table.init = 
 function ()
   return new_scene(function ()
-                    game.add_entity(entity_table.baddy(32,32,new_position(64,64),true))
+                    game.add_entity(entity_table.baddy(32,32,new_vector(64,64),true))
                   end,
                   nil,
                   function ()
