@@ -201,7 +201,7 @@ Vector.Animation.CircularMotion = function(_self,_center,_speed)
     while not _end do
       step += 1
       _self:Set(-cos((step/framerate)*_speed)*radius + _center.x,-sin((step/framerate)*_speed)*radius + _center.y)
-      yield()
+      _end = yield()
     end
   end
   
@@ -346,11 +346,12 @@ function parse_compressed_frame(_compressed_string)
   local compressed_frames = split(_compressed_string,"/")
   return {parse_sprite_frames(compressed_frames[1]),parse_hitbox_frames(compressed_frames[2]),parse_displacement_frames(compressed_frames[3])}
 end
-function new_clip(_compressed_frames,_sample_rate)
+function new_clip(_compressed_frames,_sample_rate,_callback)
   --[[
   --clip consists of frames, who are built via parse_compressed_frame 
   --and contain compressed_sprite frames, compressed_hitbox frames, and compressed displacement frames
   --a frame then contains the raw sprite,hitbox,and displacement which will be sampled
+  --finally a clip may contain a _callback function that way on each sample frame a function can be called
   ]]--
   local parsed_frames = parse_compressed_frame(_compressed_frames)
   local frames,
@@ -366,11 +367,13 @@ function new_clip(_compressed_frames,_sample_rate)
   for i=1,length do
     add(frames,new_frame(sprite_frames[i],hitbox_frames[i],displacement_frames[i]))
   end
-  return {frames=frames,sample_rate=_sample_rate,length=length}
+  return {frames=frames,sample_rate=_sample_rate,callback=_callback,length=length}
 end
 --animation
-function new_animation(_clip,_sprite,_hitbox,_position)
-  local frame = 0
+function new_animation(_clip,_sprite,_hitbox,_position,_entity)
+  
+  --TODO cleanup parse format, reduce tokens, make defaultable animation stuff
+  local frame = _clip.sample_rate --frame must start on sample rate for animation to begin on frame 1
   local sample = 1
   
   local anim = function (_loop)
@@ -384,6 +387,9 @@ function new_animation(_clip,_sprite,_hitbox,_position)
         end
         if _clip.frames[sample].displacement and _position then
           set_to(_position,new_vector(_position.x+_clip.frames[sample].displacement.x,_position.y+_clip.frames[sample].displacement.y))
+        end
+        if _clip.callback then
+          _clip.callback(sample,_entity)
         end
       end
       frame += 1
@@ -642,15 +648,16 @@ function(_x,_y)
   local position = new_vector(32,32)
   local co = Vector.Animation.CircularMotion(position,end_point,.5)
   local hitbox = new_hitbox()
-  local anim = new_animation(new_clip("32,1,1,2,2,0,0|34,1,1,2,2,0,0|32,1,1,2,2,0,0|34,1,1,2,2,1,0/8,4,5,-5|8,4,10,-10|8,4,5,-5/4,4|-4,-4",20),sprite,hitbox,position)
+  local end_circle = false
+  local anim = new_animation(new_clip("32,1,1,2,2,0,0|34,1,1,2,2,0,0|32,1,1,2,2,0,0|34,1,1,2,2,1,0/8,4,5,-5|8,4,10,-10|8,4,5,-5/4,4|-4,-4",20,function(_sample,_entity) printh("I'm an animation callback on sample: " .. _sample) end),sprite,hitbox,position,_entity)
   return new_entity("baddy",
         {"enemy"},
         position,
         function (entity)
-          --coresume(co)
-          coresume(anim,true)
+          coresume(co,end_circle)
+          position.x += 10
+          --coresume(anim,true)
           --entity.position:ToWhole()
-          --printh(stringify_table(position))
         end,
         function (entity)
           sprite:draw(entity)
